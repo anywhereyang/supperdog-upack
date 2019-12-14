@@ -136,8 +136,8 @@ namespace dnlib.Examples {
         {
             try
             {
-                String inFilePath = @"C:\ACTI_DIAG_WORKSHOP\VDSMMI\VDS.exe";
-                String outFilePath = @"C:\ACTI_DIAG_WORKSHOP\VDSMMI\vds_re.exe";
+                String inFilePath = @"c:\abc.exe";
+                String outFilePath = @"c:\abc_re.exe";
                 Assembly ass = Assembly.Load(File.ReadAllBytes(inFilePath));
                 Type decryptClass = ass.GetType("7120480");
                 ModuleDefMD module = ModuleDefMD.Load(inFilePath);
@@ -341,7 +341,7 @@ namespace dnlib.Examples {
             ModuleDefMD module = null;
             try
             {
-                module = ModuleDefMD.Load(@"C:\ACTI_DIAG_WORKSHOP\VDSMMI\vds_re.exe");
+                module = ModuleDefMD.Load(@"c:\abc_re.exe");
             }
             catch (Exception e)
             {
@@ -395,7 +395,7 @@ namespace dnlib.Examples {
                     }
                 }
 
-                String outPath = @"C:\ACTI_DIAG_WORKSHOP\VDSMMI\vds_re2.exe";
+                String outPath = @"c:\abc_re2.exe";
 
                 module.Write(outPath);
                 Console.WriteLine("all done:" + outPath);
