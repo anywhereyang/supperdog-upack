@@ -1,0 +1,409 @@
+using System;
+using System.IO;
+using dnlib.DotNet;
+using dnlib.DotNet.MD;
+using dnlib.DotNet.Writer;
+using dnlib.IO;
+using dnlib.PE;
+using dnlib.DotNet.Emit;
+using System.Collections.Generic;
+using System.Reflection;
+using System.Reflection.Emit;
+using System.Runtime.InteropServices;
+using System.Globalization;
+using System.Linq.Expressions;
+using System.Linq;
+using System.Text;
+using System.Security.Cryptography;
+
+
+
+namespace dnlib.Examples {
+
+    class DelegateTypeFactory
+    {
+        private readonly ModuleBuilder m_module;
+
+        public DelegateTypeFactory()
+        {
+            var assembly = AppDomain.CurrentDomain.DefineDynamicAssembly(
+                new AssemblyName("DelegateTypeFactory"), AssemblyBuilderAccess.RunAndCollect);
+            m_module = assembly.DefineDynamicModule("DelegateTypeFactory");
+        }
+
+        public Type CreateDelegateType(MethodInfo method)
+        {
+            string nameBase = string.Format("{0}{1}", method.DeclaringType.Name, method.Name);
+            string name = GetUniqueName(nameBase);
+
+            var typeBuilder = m_module.DefineType(
+                name, System.Reflection.TypeAttributes.Sealed | System.Reflection.TypeAttributes.Public, typeof(MulticastDelegate));
+
+            var constructor = typeBuilder.DefineConstructor(
+               System.Reflection.MethodAttributes.RTSpecialName | System.Reflection.MethodAttributes.HideBySig | System.Reflection.MethodAttributes.Public,
+                CallingConventions.Standard, new[] { typeof(object), typeof(IntPtr) });
+            constructor.SetImplementationFlags(System.Reflection.MethodImplAttributes.CodeTypeMask);
+
+            var parameters = method.GetParameters();
+
+            var invokeMethod = typeBuilder.DefineMethod(
+                "Invoke", System.Reflection.MethodAttributes.HideBySig | System.Reflection.MethodAttributes.Virtual | System.Reflection.MethodAttributes.Public,
+                method.ReturnType, parameters.Select(p => p.ParameterType).ToArray());
+            invokeMethod.SetImplementationFlags(System.Reflection.MethodImplAttributes.CodeTypeMask);
+
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                var parameter = parameters[i];
+                invokeMethod.DefineParameter(i + 1, ParameterAttributes.None, parameter.Name);
+            }
+
+            return typeBuilder.CreateType();
+        }
+
+        public Type CreateDelegateType(ConstructorInfo method)
+        {
+            string nameBase = string.Format("{0}{1}", method.DeclaringType.Name, method.Name);
+            string name = GetUniqueName(nameBase);
+
+            var typeBuilder = m_module.DefineType(
+                name, System.Reflection.TypeAttributes.Sealed | System.Reflection.TypeAttributes.Public, typeof(MulticastDelegate));
+
+            var constructor = typeBuilder.DefineConstructor(
+               System.Reflection.MethodAttributes.RTSpecialName | System.Reflection.MethodAttributes.HideBySig | System.Reflection.MethodAttributes.Public,
+                CallingConventions.Standard, new[] { typeof(object), typeof(IntPtr) });
+            constructor.SetImplementationFlags(System.Reflection.MethodImplAttributes.CodeTypeMask);
+
+            var parameters = method.GetParameters();
+
+            var invokeMethod = typeBuilder.DefineMethod(
+                "Invoke", System.Reflection.MethodAttributes.HideBySig | System.Reflection.MethodAttributes.Virtual | System.Reflection.MethodAttributes.Public,
+                typeof(void), parameters.Select(p => p.ParameterType).ToArray());
+            invokeMethod.SetImplementationFlags(System.Reflection.MethodImplAttributes.CodeTypeMask);
+
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                var parameter = parameters[i];
+                invokeMethod.DefineParameter(i + 1, ParameterAttributes.None, parameter.Name);
+            }
+
+            return typeBuilder.CreateType();
+        }
+
+        private string GetUniqueName(string nameBase)
+        {
+            int number = 2;
+            string name = nameBase;
+            while (m_module.GetType(name) != null)
+                name = nameBase + number++;
+            return name;
+        }
+    }
+
+	/// <summary>
+	/// This example shows how to create a module writer listener that gets notified of various
+	/// events. This listener just adds a new PE section to the image and prints the new RIDs.
+	/// It also shows how to add some dummy .NET heaps, and simple obfuscation that will break
+	/// most libraries that open .NET assemblies.
+	/// </summary>
+	public class Example6 : IModuleWriterListener {
+		public static void Run() {
+			new Example6().decryptMethodBody();
+            //new Example6().DecryptModuleText();
+		}
+        public void OnWriterEvent(ModuleWriterBase writer, ModuleWriterEvent evt)
+        {
+        }
+
+        private static Delegate CreateDelegate(object instance, MethodInfo method)
+        {
+            var parametersInfo = method.GetParameters();
+            Expression[] expArgs = new Expression[parametersInfo.Length];
+            List<ParameterExpression> lstParamExpressions = new List<ParameterExpression>();
+            for (int i = 0; i < expArgs.Length; i++)
+            {
+                expArgs[i] = Expression.Parameter(parametersInfo[i].ParameterType, parametersInfo[i].Name);
+                lstParamExpressions.Add((ParameterExpression)expArgs[i]);
+            }
+
+            MethodCallExpression callExpression = Expression.Call(Expression.Constant(instance), method, expArgs);
+            LambdaExpression lambdaExpression = Expression.Lambda(callExpression, lstParamExpressions);
+
+            return lambdaExpression.Compile();
+        }
+
+
+        void decryptMethodBody()
+        {
+            try
+            {
+                String inFilePath = @"C:\ACTI_DIAG_WORKSHOP\VDSMMI\VDS.exe";
+                String outFilePath = @"C:\ACTI_DIAG_WORKSHOP\VDSMMI\vds_re.exe";
+                Assembly ass = Assembly.Load(File.ReadAllBytes(inFilePath));
+                Type decryptClass = ass.GetType("7120480");
+                ModuleDefMD module = ModuleDefMD.Load(inFilePath);
+
+                IEnumerable<TypeDef> types = module.GetTypes();
+                
+                foreach (var curType in types)
+                {
+                    if (!curType.IsClass)
+                    {
+                        continue;
+                    }
+
+                    Type asType = null;
+                    Type[] ttt = ass.GetTypes();
+                    foreach (var tmp in ttt)
+                    {
+                        if (tmp.MetadataToken == curType.MDToken.ToInt32())
+                        {
+                            asType = tmp; break;
+                        }
+                    }
+                    
+                    if (asType == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var curMethod in curType.Methods)
+                    {
+                        bool bNeedProcess = false;
+                        if (curMethod.HasBody)
+                        {
+                            curMethod.Body.KeepOldMaxStack = true;
+                            if (curMethod.Body.Instructions.Count < 100)
+                            {
+                                foreach (var i in curMethod.Body.Instructions)
+                                {
+                                    if (i.GetOpCode().Value == System.Reflection.Emit.OpCodes.Call.Value)
+                                    {
+                                        String op = i.GetOperand().ToString();
+                                        if (op.Equals("System.Reflection.Emit.DynamicMethod 7120480::80071137(System.Object,System.Reflection.MethodBase,System.Boolean)"))
+                                        {
+                                            bNeedProcess = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        
+                        if (bNeedProcess)
+                        {
+                            MethodBase method = null;
+                            BindingFlags bf = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly;
+                            MethodInfo[] mi = asType.GetMethods(bf);
+                            ConstructorInfo[] cons = asType.GetConstructors(bf);
+
+                            if (curMethod.IsConstructor)
+                            {
+                                foreach (var curMi in cons)
+                                {
+                                    if (curMi.MetadataToken == curMethod.MDToken.ToInt32())
+                                    {
+                                        method = curMi;
+                                        break;
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                foreach (var curMi in mi)
+                                {
+                                    if (curMi.MetadataToken == curMethod.MDToken.ToInt32())
+                                    {
+                                        method = curMi;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (method != null)
+                            {
+                                BindingFlags tmpFlags = BindingFlags.InvokeMethod | BindingFlags.Static | BindingFlags.Public;
+                                DynamicMethod md = null;
+                                try
+                                {
+                                    md = (DynamicMethod)decryptClass.InvokeMember("80071137", tmpFlags, null, null, new object[] { null, method, true });
+                                }
+                                catch (Exception e)
+                                {
+                                    Console.WriteLine("decrypt Failed:" + curType.FullName + ":" + curMethod.Name + e.Message);
+                                }
+
+
+                                if (curMethod.Name.Equals("596725834"))
+                                {
+                                    Console.WriteLine("111");
+                                }
+
+
+                                if (md != null)
+                                {
+                                    try
+                                    {
+                                        try
+                                        {
+                                            if (!method.IsConstructor)
+                                            {
+                                                DelegateTypeFactory dt = new DelegateTypeFactory();
+                                                Type t = dt.CreateDelegateType((MethodInfo)method);
+                                                md.CreateDelegate(t);
+                                            }
+                                            else
+                                            {
+                                                DelegateTypeFactory dt = new DelegateTypeFactory();
+                                                Type t = dt.CreateDelegateType((ConstructorInfo)method);
+                                                md.CreateDelegate(t);
+                                            }
+                                        }
+                                        catch (Exception e)
+                                        {
+                                            Console.WriteLine("CreateDelegate Failed:" + curType.FullName + ":" + curMethod.Name + e.Message);
+                                        }
+
+                                        DynamicMethodBodyReader reader = new DynamicMethodBodyReader(module, md);
+                                        try
+                                        {
+                                            if (reader.Read())
+                                            {
+                                                reader.RestoreMethod(curMethod);
+                                            }
+                                            else
+                                            {
+                                                Console.WriteLine("Restore Failed:" + curType.FullName + ":" + curMethod.Name);
+                                            }
+                                        }
+                                        catch (Exception e)
+                                        {
+                                            Console.WriteLine("Read Failed:" + curType.FullName + ":" + curMethod.Name + e.Message);
+                                        }
+                                    }
+                                    catch (Exception e)
+                                    {
+                                        Console.WriteLine("Process Failed:" + e.Message);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                try
+                {
+                    module.Write(outFilePath);
+                    Console.WriteLine("Write OK:" + outFilePath);
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine("Write Failed:" + e.Message);
+                }
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("error:" + e.Message);
+            }
+            Console.WriteLine("all done:");
+        }
+
+        public string decryptText(string string_0)
+        {
+            byte[] byte_0 = new byte[] { 0x1E, 0xFB, 0xC3, 0xC0, 0x78, 0x35, 0x83, 0x75, 0xBE, 0x78, 0xB7, 0x27, 0xFF, 0xEF, 0xEB, 0x02};
+            byte[] byte_1 = new byte[] { 0x4B, 0xB3, 0xE4, 0x87, 0xB0, 0xEF, 0x33, 0xD1, 0x68, 0x42, 0x0A, 0x1D, 0x50, 0x64, 0x4F, 0x89 };
+
+            //GClass3.smethod_14();
+            string text = "";
+            UnicodeEncoding unicodeEncoding = new UnicodeEncoding();
+            char[] array = string_0.ToCharArray();
+            byte[] array2 = new byte[string_0.Length * 2];
+            for (int i = 0; i < string_0.Length; i++)
+            {
+                int num = Convert.ToInt32(array[i]);
+                array2[i * 2] = (byte)(num & 255);
+                array2[i * 2 + 1] = (byte)(num >> 8 & 255);
+            }
+            Rijndael rijndael = new RijndaelManaged();
+            rijndael.Padding = PaddingMode.PKCS7;
+            rijndael.Mode = CipherMode.CBC;
+            MemoryStream stream = new MemoryStream(array2);
+            CryptoStream cryptoStream = new CryptoStream(stream, rijndael.CreateDecryptor(byte_0, byte_1), CryptoStreamMode.Read);
+            byte[] array3 = new byte[64];
+            for (int j = cryptoStream.Read(array3, 0, 64); j > 0; j = cryptoStream.Read(array3, 0, 64))
+            {
+                text += unicodeEncoding.GetString(array3, 0, j);
+            }
+            return string.Intern(text);
+        }
+
+        void DecryptModuleText()
+        {
+            ModuleDefMD module = null;
+            try
+            {
+                module = ModuleDefMD.Load(@"C:\ACTI_DIAG_WORKSHOP\VDSMMI\vds_re.exe");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("error:" + e.Message);
+            }
+
+            try
+            {
+                var types = module.GetTypes();
+                foreach (var type in types)
+                {
+                    foreach (var method in type.Methods)
+                    {
+                        if (!method.HasBody)
+                            continue;
+
+                        method.Body.KeepOldMaxStack = true;
+                        Dictionary<uint, Instruction> refDict =new Dictionary<uint,Instruction>();
+                        
+                        for (int i = 0; i < method.Body.Instructions.Count; i++)
+                        {
+                            var instr = method.Body.Instructions[i];
+                            Instruction nextInstr = null;
+                            if (i < method.Body.Instructions.Count - 1)
+                            {
+                                nextInstr = method.Body.Instructions[i + 1];
+                            }
+
+                            if (instr.GetOpCode() == dnlib.DotNet.Emit.OpCodes.Ldstr
+                                && nextInstr != null
+                                && nextInstr.GetOpCode() ==  dnlib.DotNet.Emit.OpCodes.Call)
+                            {
+                                String op = nextInstr.GetOperand().ToString();
+                                
+                                if (op.Equals("System.String 7120496/7120531::80071223(System.String)"))
+                                {
+                                    String oriText = instr.GetOperand().ToString();
+                                    oriText = decryptText(oriText);
+                                   
+                                    Instruction newInstr = new Instruction(instr.OpCode, oriText);
+                                    Instruction newNop = new Instruction(dnlib.DotNet.Emit.OpCodes.Nop);
+
+                                    //method.Body.Instructions[i] = newInstr;
+                                    //method.Body.Instructions[i + 1] = newNop;
+                                    method.Body.Instructions[i].Operand = oriText;
+                                    method.Body.Instructions[i + 1].OpCode = dnlib.DotNet.Emit.OpCodes.Nop;
+                                    refDict[instr.Offset] = newInstr;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                String outPath = @"C:\ACTI_DIAG_WORKSHOP\VDSMMI\vds_re2.exe";
+
+                module.Write(outPath);
+                Console.WriteLine("all done:" + outPath);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("error:" + e.Message);
+            }
+        } 
+	}
+}
